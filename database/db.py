@@ -15,7 +15,22 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
-    # 1. Products Table (Added category column to match admin wizard)
+    # 1. Users Table (Includes Referral Tracking)
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            referred_by INTEGER,
+            points INTEGER DEFAULT 0,
+            referrals_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (referred_by) REFERENCES users (user_id) ON DELETE SET NULL
+        )
+    """
+    )
+
+    # 2. Products Table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS products (
@@ -31,7 +46,7 @@ def init_db():
     """
     )
 
-    # 2. Cart Table
+    # 3. Cart Table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS cart (
@@ -47,7 +62,7 @@ def init_db():
     """
     )
 
-    # 3. Orders Master Table
+    # 4. Orders Master Table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
@@ -63,7 +78,7 @@ def init_db():
     """
     )
 
-    # 4. Order Details Table
+    # 5. Order Details Table
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS order_items (
@@ -82,6 +97,63 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+# ----- User & Referral Functions -----
+
+
+async def register_user(user_id: int, username: str, referred_by: int = None) -> bool:
+    """Registers a user if they do not exist. Returns True if a new user was created."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    existing_user = cursor.fetchone()
+
+    if existing_user:
+        conn.close()
+        return False  # User already exists
+
+    # Insert new user record
+    cursor.execute(
+        "INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)",
+        (user_id, username, referred_by),
+    )
+    conn.commit()
+    conn.close()
+    return True  # New user successfully registered
+
+
+async def add_referral_points(referrer_id: int, points: int = 1):
+    """Increments referral points and count for the referrer."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE users 
+        SET points = points + ?, referrals_count = referrals_count + 1 
+        WHERE user_id = ?
+        """,
+        (points, referrer_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+async def get_user_stats(user_id: int) -> dict:
+    """Retrieves referral stats and points for a given user."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT points, referrals_count FROM users WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return {"points": row["points"], "referrals_count": row["referrals_count"]}
+    return {"points": 0, "referrals_count": 0}
 
 
 # ----- Product Functions -----
@@ -174,7 +246,7 @@ def add_to_cart(user_id, product_id, size, quantity=1, timeout_minutes=30):
 
     if not product or product["stock"] <= 0:
         conn.close()
-        return False, "ይህ እቃ በክምችት ውስጥ አልተገኘም።"
+        return False, "Product out of stock."
 
     # 2. Check current cart quantity for user
     cursor.execute(
@@ -188,11 +260,11 @@ def add_to_cart(user_id, product_id, size, quantity=1, timeout_minutes=30):
         conn.close()
         return (
             False,
-            f"በቂ እቃ የለም። በክምችት ያለው መጠን: {product['stock']}",
+            f"Not enough stock available. Remaining stock: {product['stock']}",
         )
 
     expires_at = (
-            datetime.now() + timedelta(minutes=timeout_minutes)
+        datetime.now() + timedelta(minutes=timeout_minutes)
     ).strftime("%Y-%m-%d %H:%M:%S")
 
     if item:
@@ -208,7 +280,7 @@ def add_to_cart(user_id, product_id, size, quantity=1, timeout_minutes=30):
 
     conn.commit()
     conn.close()
-    return True, "እቃው በተሳካ ሁኔታ ወደ ካርት ተጨምሯል።"
+    return True, "Item added to cart successfully."
 
 
 def decrease_cart_quantity(user_id, product_id, size, timeout_minutes=30):
@@ -226,7 +298,7 @@ def decrease_cart_quantity(user_id, product_id, size, timeout_minutes=30):
 
     if item:
         expires_at = (
-                datetime.now() + timedelta(minutes=timeout_minutes)
+            datetime.now() + timedelta(minutes=timeout_minutes)
         ).strftime("%Y-%m-%d %H:%M:%S")
 
         if item["quantity"] > 1:
@@ -295,7 +367,7 @@ def create_multi_item_order(user_id, user_name, phone_number):
         cart_items = get_user_cart(user_id, existing_cursor=cursor)
         if not cart_items:
             conn.close()
-            return None, "ካርቱ ባዶ ነው።"
+            return None, "Cart is empty."
 
         # 1. Final stock verification before processing
         subtotal = 0.0
@@ -309,7 +381,7 @@ def create_multi_item_order(user_id, user_name, phone_number):
                 conn.close()
                 return (
                     None,
-                    f"ለእቃው '{item['name']}' በቂ ክምችት የለም።",
+                    f"Insufficient stock for item '{item['name']}'.",
                 )
             subtotal += item["price"] * item["quantity"]
 
