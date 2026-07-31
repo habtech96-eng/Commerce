@@ -94,17 +94,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # አዲሱን ተጠቃሚ በ Users DB መመዝገብ
         add_user(user_id, referrer_id)
 
-        # የጋበዘው ሰው ካለ ነጥብ (Points) መስጠት እና Notification መላክ
+                # Add reward points and send notification to referrer
         if referrer_id:
             add_referral_points(referrer_id, points=10)
             try:
                 await context.bot.send_message(
                     chat_id=referrer_id,
-                    text="🎉 **አዲስ ሰው በሊንክዎ ተመዝግቧል!**\n+10 ነጥብ (Points) አግኝተዋል።",
+                    text="🎉 **New User Joined via Your Link!**\n+10 Points have been added to your balance.",
                     parse_mode="Markdown"
                 )
             except Exception as e:
                 logger.error(f"Error notifying referrer {referrer_id}: {e}")
+
 
     # -------------------------------------------------------------
     # 2. DEEP LINKING (Direct product display from channel link)

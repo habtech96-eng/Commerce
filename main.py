@@ -12,7 +12,7 @@ from telegram.ext import (
 
 from config import BOT_TOKEN
 from database.db import init_db, cleanup_expired_carts
-from database.users_db import init_users_db  # የሬፈራል ታብልን ለማስጀመር
+from database.users_db import init_users_db  # Initializes the referral/users schema
 
 from handlers.user import (
     start_command,
@@ -27,7 +27,7 @@ from handlers.user import (
     view_orders_history,
     WAITING_FOR_PHONE,
 )
-from handlers.referral import referral_command  # የሬፈራል Handler Import ማድረጊያ
+from handlers.referral import referral_command  # Import Referral Handler
 
 from handlers.admin import (
     admin_dashboard,
@@ -81,7 +81,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main():
     # 1. Initialize SQLite Database Schemas
     init_db()
-    init_users_db()  # የ Referral/Users DB Schema ን ማስጀመር
+    init_users_db()  # Initialize Users & Referral DB Schema
 
     # 2. Build Application with Extended HTTP Timeouts for Network Stability
     app = (
@@ -105,7 +105,7 @@ def main():
         job_queue.run_repeating(auto_cleanup_job, interval=60, first=10)
 
     # --- MENU BUTTON & COMMAND FALLBACK FILTERS ---
-    # Referral Button (🎁 Invite & Earn) እዚህ filter ውስጥ ተጨምሯል
+    # Included Referral Button ("🎁 Invite & Earn") inside the menu filter
     menu_button_filter = filters.Regex(
         "^(🛍️ Browse Catalog|🛒 My Cart|📦 My Orders|🎁 Invite & Earn|🎧 Support / Contact)"
     )
@@ -227,7 +227,7 @@ def main():
     app.add_handler(CommandHandler("support", support_command))
     app.add_handler(CommandHandler("admin", admin_dashboard))
     app.add_handler(CommandHandler("products", list_admin_products))
-    app.add_handler(CommandHandler("referral", referral_command)) # /referral Command
+    app.add_handler(CommandHandler("referral", referral_command))  # /referral Command
 
     # Reply Keyboard Triggers
     app.add_handler(
@@ -238,7 +238,7 @@ def main():
         MessageHandler(filters.Regex("^📦 My Orders$"), view_orders_history)
     )
     app.add_handler(
-        MessageHandler(filters.Regex("^🎁 Invite & Earn$"), referral_command) # 🎁 Button handler
+        MessageHandler(filters.Regex("^🎁 Invite & Earn$"), referral_command)  # 🎁 Button handler
     )
     app.add_handler(
         MessageHandler(

@@ -56,28 +56,28 @@ def is_admin(user_id: int) -> bool:
 async def post_to_channel(
         context: ContextTypes.DEFAULT_TYPE, product_data: dict
 ):
-    """አዲስ እቃ ሲጨመር አውቶማቲክ ወደ ቻናል/ግሩፕ ፖስት ማድረጊያ"""
+    """Automatically posts newly added products to the channel/group."""
     if not CHANNEL_ID:
         return
 
     icon = get_category_icon(product_data["name"])
 
     caption = (
-        f"💎 PREMIUM ARRIVAL / አዲስ የገባ 💎\n\n"
+        f"💎 PREMIUM ARRIVAL / NEW ITEM 💎\n\n"
         f"{icon} Product: {product_data['name']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📏 Available Sizes: {product_data['size']}\n"
         f"📦 In Stock: {product_data['stock']} item(s)\n"
         f"💵 Price: {product_data['price']:,.2f} ETB\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👇 ከታች ያለውን ቁልፍ ተጭነው በቀጥታ በቦታችን ይዘዙ!"
+        f"👇 Click the button below to order directly via our bot!"
     )
 
     bot_username = (await context.bot.get_me()).username
     buy_url = f"https://t.me/{bot_username}?start=prod_{product_data['id']}"
 
     keyboard = [
-        [InlineKeyboardButton("🛍️ በቀጥታ በቦት ይግዙ (Order Now)", url=buy_url)]
+        [InlineKeyboardButton("🛍️ Order Now via Bot", url=buy_url)]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
