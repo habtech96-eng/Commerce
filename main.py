@@ -1,5 +1,5 @@
 import logging
-
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -12,6 +12,8 @@ from telegram.ext import (
 
 from config import BOT_TOKEN
 from database.db import init_db, cleanup_expired_carts
+from database.users_db import init_users_db  # የሬፈራል ታብልን ለማስጀመር
+
 from handlers.user import (
     start_command,
     support_command,
@@ -25,6 +27,8 @@ from handlers.user import (
     view_orders_history,
     WAITING_FOR_PHONE,
 )
+from handlers.referral import referral_command  # የሬፈራል Handler Import ማድረጊያ
+
 from handlers.admin import (
     admin_dashboard,
     list_admin_products,
@@ -65,24 +69,64 @@ async def auto_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
         logging.getLogger(__name__).error(f"Error in auto_cleanup_job: {e}")
 
 
-def main():
-    # 1. Initialize SQLite Database Schema
-    init_db()
+# Global Network & General Error Handler
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors caused by updates and handle network glitches gracefully"""
+    if isinstance(context.error, (NetworkError, TimedOut)):
+        logging.warning(f"Network glitch occurred: {context.error}. Retrying automatically...")
+    else:
+        logging.error(f"Update {update} caused error {context.error}")
 
-    # 2. Build Application with HTTP Timeouts
+
+def main():
+    # 1. Initialize SQLite Database Schemas
+    init_db()
+    init_users_db()  # የ Referral/Users DB Schema ን ማስጀመር
+
+    # 2. Build Application with Extended HTTP Timeouts for Network Stability
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .connect_timeout(30.0)
-        .read_timeout(30.0)
-        .write_timeout(30.0)
+        .connect_timeout(60.0)
+        .read_timeout(60.0)
+        .write_timeout(60.0)
+        .pool_timeout(60.0)
+        .get_updates_connect_timeout(60.0)
+        .get_updates_read_timeout(60.0)
         .build()
     )
+
+    # Register Global Error Handler
+    app.add_error_handler(error_handler)
 
     # Schedule JobQueue for Auto-Cleaner (Runs every 1 minute)
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(auto_cleanup_job, interval=60, first=10)
+
+    # --- MENU BUTTON & COMMAND FALLBACK FILTERS ---
+    # Referral Button (🎁 Invite & Earn) እዚህ filter ውስጥ ተጨምሯል
+    menu_button_filter = filters.Regex(
+        "^(🛍️ Browse Catalog|🛒 My Cart|📦 My Orders|🎁 Invite & Earn|🎧 Support / Contact)"
+    )
+
+    cancel_fallbacks = [
+        CommandHandler("cancel", cancel_add),
+        CommandHandler("start", cancel_add),
+        CommandHandler("admin", cancel_add),
+        CommandHandler("products", cancel_add),
+        CommandHandler("referral", cancel_add),
+        MessageHandler(menu_button_filter, cancel_add),
+    ]
+
+    checkout_fallbacks = [
+        CommandHandler("cancel", cancel_checkout),
+        CommandHandler("start", cancel_checkout),
+        CommandHandler("admin", cancel_checkout),
+        CommandHandler("products", cancel_checkout),
+        CommandHandler("referral", cancel_checkout),
+        MessageHandler(menu_button_filter, cancel_checkout),
+    ]
 
     # --- 3. CONVERSATION HANDLERS ---
 
@@ -94,12 +138,13 @@ def main():
         states={
             WAITING_FOR_PHONE: [
                 MessageHandler(
-                    filters.CONTACT | (filters.TEXT & ~filters.COMMAND),
+                    filters.CONTACT
+                    | (filters.TEXT & ~filters.COMMAND & ~menu_button_filter),
                     process_checkout,
                 )
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_checkout)],
+        fallbacks=checkout_fallbacks,
         per_chat=True,
         per_user=True,
     )
@@ -113,29 +158,44 @@ def main():
                     handle_category_selection, pattern="^cat_"
                 ),
                 MessageHandler(
-                    filters.TEXT & ~filters.COMMAND, get_custom_category
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    get_custom_category,
                 ),
             ],
             ADD_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    get_name,
+                )
             ],
             ADD_SIZE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_size)
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    get_size,
+                )
             ],
             ADD_PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    get_price,
+                )
             ],
             ADD_STOCK: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, get_stock)
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    get_stock,
+                )
             ],
             ADD_PHOTO: [
                 MessageHandler(
-                    (filters.PHOTO | filters.TEXT) & ~filters.COMMAND,
+                    (filters.PHOTO | filters.TEXT)
+                    & ~filters.COMMAND
+                    & ~menu_button_filter,
                     get_photo,
                 )
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel_add)],
+        fallbacks=cancel_fallbacks,
     )
 
     # C) Admin Stock Edit Conversation
@@ -148,16 +208,16 @@ def main():
         states={
             WAITING_FOR_STOCK_INPUT: [
                 MessageHandler(
-                    filters.TEXT & ~filters.COMMAND, process_stock_update
+                    filters.TEXT & ~filters.COMMAND & ~menu_button_filter,
+                    process_stock_update,
                 )
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel_add)],
+        fallbacks=cancel_fallbacks,
     )
 
     # --- 4. REGISTER HANDLERS ---
 
-    # Register Conversations first to ensure state priority
     app.add_handler(checkout_handler)
     app.add_handler(admin_add_handler)
     app.add_handler(stock_edit_handler)
@@ -167,18 +227,23 @@ def main():
     app.add_handler(CommandHandler("support", support_command))
     app.add_handler(CommandHandler("admin", admin_dashboard))
     app.add_handler(CommandHandler("products", list_admin_products))
+    app.add_handler(CommandHandler("referral", referral_command)) # /referral Command
 
-    # Reply Keyboard Triggers (UPDATED REGEX FOR CART BADGE)
+    # Reply Keyboard Triggers
     app.add_handler(
         MessageHandler(filters.Regex("^🛍️ Browse Catalog$"), show_catalog)
     )
-    # `^🛒 My Cart` በማድረጋችን ቁጥር ቢኖረውም አግኝቶ ይሰራል
     app.add_handler(MessageHandler(filters.Regex("^🛒 My Cart"), view_cart))
     app.add_handler(
         MessageHandler(filters.Regex("^📦 My Orders$"), view_orders_history)
     )
     app.add_handler(
-        MessageHandler(filters.Regex("^🎧 Support / Contact$"), support_command)
+        MessageHandler(filters.Regex("^🎁 Invite & Earn$"), referral_command) # 🎁 Button handler
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.Regex("^🎧 Support / Contact$"), support_command
+        )
     )
 
     # Dynamic Inline Button Callbacks

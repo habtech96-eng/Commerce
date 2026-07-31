@@ -20,6 +20,8 @@ from database.db import (
     get_order_details,
     decrease_cart_quantity,
 )
+# የ Referral Database Funktionen Import ማድረጊያ
+from database.users_db import get_user, add_user, add_referral_points
 
 # Import ADMIN_IDS safely or provide default
 try:
@@ -56,12 +58,11 @@ def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
 
     cart_label = f"🛒 My Cart ({total_qty})" if total_qty > 0 else "🛒 My Cart"
 
+    # '🎁 Invite & Earn' የሚለው አዲስ Button እዚህ ተጨምሯል
     keyboard = [
         [KeyboardButton("🛍️ Browse Catalog"), KeyboardButton(cart_label)],
-        [
-            KeyboardButton("📦 My Orders"),
-            KeyboardButton("🎧 Support / Contact"),
-        ],
+        [KeyboardButton("📦 My Orders"), KeyboardButton("🎁 Invite & Earn")],
+        [KeyboardButton("🎧 Support / Contact")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -70,11 +71,44 @@ def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Welcome screen & Deep Link (prod_ID) handler with dynamic cart counts."""
+    """Welcome screen, Referral Link Processing & Deep Link (prod_ID) handler."""
     user_first_name = update.effective_user.first_name or "Valued Customer"
     user_id = update.effective_user.id
 
-    # 🚀 Deep Linking: Direct product display from channel link
+    # -------------------------------------------------------------
+    # 1. REFERRAL SYSTEM LOGIC (የጋበዣ ሲስተም)
+    # -------------------------------------------------------------
+    existing_user = get_user(user_id)
+
+    # አዲስ ተጠቃሚ ከሆነ ብቻ Referral ሎጂኩ ይሠራል
+    if not existing_user:
+        referrer_id = None
+
+        # በሬፈራል ሊንክ ከተመጣ (ለምሳሌ /start 12345678)
+        if context.args and context.args[0].isdigit():
+            possible_ref = int(context.args[0])
+            # ራሱን እንዳይጋብዝ እና የጋበዘው ሰው DB ውስጥ መኖሩን ማረጋገጥ
+            if possible_ref != user_id and get_user(possible_ref):
+                referrer_id = possible_ref
+
+        # አዲሱን ተጠቃሚ በ Users DB መመዝገብ
+        add_user(user_id, referrer_id)
+
+        # የጋበዘው ሰው ካለ ነጥብ (Points) መስጠት እና Notification መላክ
+        if referrer_id:
+            add_referral_points(referrer_id, points=10)
+            try:
+                await context.bot.send_message(
+                    chat_id=referrer_id,
+                    text="🎉 **አዲስ ሰው በሊንክዎ ተመዝግቧል!**\n+10 ነጥብ (Points) አግኝተዋል።",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Error notifying referrer {referrer_id}: {e}")
+
+    # -------------------------------------------------------------
+    # 2. DEEP LINKING (Direct product display from channel link)
+    # -------------------------------------------------------------
     if context.args and context.args[0].startswith("prod_"):
         try:
             product_id = int(context.args[0].split("_")[1])
@@ -111,6 +145,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error handling deep link: {e}")
 
+    # -------------------------------------------------------------
+    # 3. NORMAL WELCOME SCREEN
+    # -------------------------------------------------------------
     welcome_text = (
         f"💎 Welcome to Ethio Shoe Store, {user_first_name}!\n"
         f"Your ultimate spot for premium shoes, clothing & accessories.\n\n"
@@ -118,6 +155,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Main Features:\n"
         f"• 🛍️ Browse latest catalog & sizes\n"
         f"• 🛒 Multi-item Shopping Cart\n"
+        f"• 🎁 Invite friends & earn reward points\n"
         f"• 🚀 Fast Checkout & Order Tracking\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👇 Use the buttons below to start shopping:"
