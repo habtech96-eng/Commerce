@@ -160,3 +160,34 @@ def get_top_referrers(limit: int = 10):
     except Exception as e:
         logger.error(f"Error fetching top referrers: {e}")
         return []
+
+def get_top_referrers(limit=10):
+    """Fetches top users sorted by their referral count"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT first_name, referral_count, points FROM users ORDER BY referral_count DESC LIMIT ?",
+            (limit,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.error(f"Error fetching leaderboard: {e}")
+        return []
+
+def get_all_user_ids():
+    """Fetches all registered Telegram user IDs for admin broadcasts."""
+    import sqlite3
+    
+    # Replace 'users.db' with your actual database path/connection function if different
+    conn = sqlite3.connect("users.db")
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT telegram_id FROM users")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Returns a flat list of user IDs: [12345678, 87654321, ...]
+    return [row[0] for row in rows]
