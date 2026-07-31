@@ -1,0 +1,20 @@
+# Python temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Database files
+*.db
+*.sqlite3
+
+# Environment & Credentials
+.env
+config_secret.py
+
+# System files
+.DS_Store
