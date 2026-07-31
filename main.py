@@ -12,8 +12,9 @@ from telegram.ext import (
 
 from config import BOT_TOKEN
 from database.db import init_db, cleanup_expired_carts
-from database.users_db import init_users_db  # Initializes the referral/users schema
+from database.users_db import init_users_db
 
+# User Handlers
 from handlers.user import (
     start_command,
     support_command,
@@ -27,8 +28,15 @@ from handlers.user import (
     view_orders_history,
     WAITING_FOR_PHONE,
 )
-from handlers.referral import referral_command  # Import Referral Handler
 
+# Referral & Leaderboard Handlers
+from handlers.referral import (
+    referral_command,
+    show_leaderboard,
+    show_referral_info,
+)
+
+# Admin Handlers & Broadcast System
 from handlers.admin import (
     admin_dashboard,
     list_admin_products,
@@ -44,6 +52,8 @@ from handlers.admin import (
     get_photo,
     cancel_add,
     admin_order_callback,
+    start_broadcast,
+    process_broadcast,
     ADD_CATEGORY,
     ADD_NAME,
     ADD_SIZE,
@@ -51,6 +61,7 @@ from handlers.admin import (
     ADD_STOCK,
     ADD_PHOTO,
     WAITING_FOR_STOCK_INPUT,
+    WAITING_FOR_BROADCAST_MSG,
 )
 
 # Logging Setup
@@ -73,7 +84,9 @@ async def auto_cleanup_job(context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log errors caused by updates and handle network glitches gracefully"""
     if isinstance(context.error, (NetworkError, TimedOut)):
-        logging.warning(f"Network glitch occurred: {context.error}. Retrying automatically...")
+        logging.warning(
+            f"Network glitch occurred: {context.error}. Retrying automatically..."
+        )
     else:
         logging.error(f"Update {update} caused error {context.error}")
 
@@ -81,7 +94,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main():
     # 1. Initialize SQLite Database Schemas
     init_db()
-    init_users_db()  # Initialize Users & Referral DB Schema
+    init_users_db()
 
     # 2. Build Application with Extended HTTP Timeouts for Network Stability
     app = (
@@ -105,7 +118,6 @@ def main():
         job_queue.run_repeating(auto_cleanup_job, interval=60, first=10)
 
     # --- MENU BUTTON & COMMAND FALLBACK FILTERS ---
-    # Included Referral Button ("🎁 Invite & Earn") inside the menu filter
     menu_button_filter = filters.Regex(
         "^(🛍️ Browse Catalog|🛒 My Cart|📦 My Orders|🎁 Invite & Earn|🎧 Support / Contact)"
     )
@@ -116,6 +128,8 @@ def main():
         CommandHandler("admin", cancel_add),
         CommandHandler("products", cancel_add),
         CommandHandler("referral", cancel_add),
+        CommandHandler("leaderboard", cancel_add),
+        CommandHandler("broadcast", cancel_add),
         MessageHandler(menu_button_filter, cancel_add),
     ]
 
@@ -125,6 +139,8 @@ def main():
         CommandHandler("admin", cancel_checkout),
         CommandHandler("products", cancel_checkout),
         CommandHandler("referral", cancel_checkout),
+        CommandHandler("leaderboard", cancel_checkout),
+        CommandHandler("broadcast", cancel_checkout),
         MessageHandler(menu_button_filter, cancel_checkout),
     ]
 
@@ -133,7 +149,9 @@ def main():
     # A) Checkout Flow Conversation
     checkout_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(start_checkout, pattern="^start_checkout$")
+            CallbackQueryHandler(
+                start_checkout, pattern="^(start_checkout|proceed_checkout)$"
+            )
         ],
         states={
             WAITING_FOR_PHONE: [
@@ -216,18 +234,37 @@ def main():
         fallbacks=cancel_fallbacks,
     )
 
+    # D) Admin Broadcast System Conversation
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", start_broadcast)],
+        states={
+            WAITING_FOR_BROADCAST_MSG: [
+                MessageHandler(
+                    ~filters.COMMAND & ~menu_button_filter,
+                    process_broadcast,
+                )
+            ]
+        },
+        fallbacks=cancel_fallbacks,
+    )
+
     # --- 4. REGISTER HANDLERS ---
 
+    # Conversation Handlers First
     app.add_handler(checkout_handler)
     app.add_handler(admin_add_handler)
     app.add_handler(stock_edit_handler)
+    app.add_handler(broadcast_handler)
 
-    # Commands
+    # User & General Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("support", support_command))
+    app.add_handler(CommandHandler("referral", referral_command))
+    app.add_handler(CommandHandler("leaderboard", show_leaderboard))
+
+    # Admin Commands
     app.add_handler(CommandHandler("admin", admin_dashboard))
     app.add_handler(CommandHandler("products", list_admin_products))
-    app.add_handler(CommandHandler("referral", referral_command))  # /referral Command
 
     # Reply Keyboard Triggers
     app.add_handler(
@@ -238,7 +275,7 @@ def main():
         MessageHandler(filters.Regex("^📦 My Orders$"), view_orders_history)
     )
     app.add_handler(
-        MessageHandler(filters.Regex("^🎁 Invite & Earn$"), referral_command)  # 🎁 Button handler
+        MessageHandler(filters.Regex("^🎁 Invite & Earn$"), referral_command)
     )
     app.add_handler(
         MessageHandler(
@@ -246,7 +283,17 @@ def main():
         )
     )
 
-    # Dynamic Inline Button Callbacks
+    # Referral & Profile Inline Callbacks
+    app.add_handler(
+        CallbackQueryHandler(
+            show_referral_info, pattern="^(show_referral|show_profile)$"
+        )
+    )
+    app.add_handler(
+        CallbackQueryHandler(start_command, pattern="^back_to_main$")
+    )
+
+    # Dynamic Catalog Inline Button Callbacks
     app.add_handler(
         CallbackQueryHandler(
             handle_catalog_interactions,
@@ -254,19 +301,21 @@ def main():
         )
     )
 
-    # Product Delete Action Callback
+    # Admin Product Delete Callback
     app.add_handler(
         CallbackQueryHandler(
             handle_product_admin_actions, pattern="^delprod_"
         )
     )
 
-    # Cart & Admin Order Callbacks
+    # Cart Actions Callback
     app.add_handler(
         CallbackQueryHandler(
             cart_action_handler, pattern="^(clear_cart|open_catalog)$"
         )
     )
+
+    # Admin Order Approval / Cancellation Callbacks
     app.add_handler(
         CallbackQueryHandler(
             admin_order_callback, pattern="^(approve|cancel)_"

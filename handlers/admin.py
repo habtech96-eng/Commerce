@@ -18,6 +18,7 @@ from database.db import (
     update_product_stock,
     get_db,
 )
+from database.users_db import get_all_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,9 @@ logger = logging.getLogger(__name__)
     ADD_STOCK,
     ADD_PHOTO,
 ) = range(6)
+
 WAITING_FOR_STOCK_INPUT = 10
+WAITING_FOR_BROADCAST_MSG = 20
 
 CATEGORY_ICONS = {
     "Shoes": "👟",
@@ -54,7 +57,7 @@ def is_admin(user_id: int) -> bool:
 
 # ----- Auto-Post Helper Function -----
 async def post_to_channel(
-        context: ContextTypes.DEFAULT_TYPE, product_data: dict
+    context: ContextTypes.DEFAULT_TYPE, product_data: dict
 ):
     """Automatically posts newly added products to the channel/group."""
     if not CHANNEL_ID:
@@ -63,14 +66,14 @@ async def post_to_channel(
     icon = get_category_icon(product_data["name"])
 
     caption = (
-        f"💎 PREMIUM ARRIVAL / NEW ITEM 💎\n\n"
+        "💎 PREMIUM ARRIVAL / NEW ITEM 💎\n\n"
         f"{icon} Product: {product_data['name']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📏 Available Sizes: {product_data['size']}\n"
         f"📦 In Stock: {product_data['stock']} item(s)\n"
         f"💵 Price: {product_data['price']:,.2f} ETB\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👇 Click the button below to order directly via our bot!"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👇 Click the button below to order directly via our bot!"
     )
 
     bot_username = (await context.bot.get_me()).username
@@ -145,6 +148,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📌 Quick Admin Commands:\n"
         "• /add - Add new product\n"
         "• /products - View, Delete & Edit stock of existing items\n"
+        "• /broadcast - Send announcement to all users\n"
         "• /cancel - Cancel active wizard operation"
     )
     await update.message.reply_text(dashboard_text)
@@ -152,7 +156,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----- Product Management (/products) -----
 async def list_admin_products(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 Access Denied.")
@@ -191,7 +195,7 @@ async def list_admin_products(
 
 
 async def handle_product_admin_actions(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.callback_query
     if not is_admin(query.from_user.id):
@@ -214,13 +218,13 @@ async def handle_product_admin_actions(
         await query.answer()
         await query.message.reply_text(
             f"✏️ Enter new stock quantity for Product ID #{p_id}:\n\n"
-            f"(Or send /cancel to stop)"
+            "(Or send /cancel to stop)"
         )
         return WAITING_FOR_STOCK_INPUT
 
 
 async def process_stock_update(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     p_id = context.user_data.get("editing_stock_pid")
     if not p_id:
@@ -249,7 +253,7 @@ async def process_stock_update(
 
 # ----- /add Product Wizard -----
 async def start_add_product(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     if not is_admin(update.effective_user.id):
         await update.message.reply_text(
@@ -266,7 +270,7 @@ async def start_add_product(
 
 
 async def handle_category_selection(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.callback_query
     await query.answer()
@@ -289,7 +293,7 @@ async def handle_category_selection(
 
 
 async def get_custom_category(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     if context.user_data.get("waiting_custom_cat"):
         custom_cat = update.message.text.strip()
@@ -408,8 +412,8 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await post_to_channel(context, product_info)
 
         await update.message.reply_text(
-            f"✅ Product Created Successfully!\n"
-            f"📢 Posted to Channel/Group!\n\n"
+            "✅ Product Created Successfully!\n"
+            "📢 Posted to Channel/Group!\n\n"
             f"🆔 Product ID: {p_id}\n"
             f"📦 Name: {product_name}\n"
             f"📏 Sizes: {size}\n"
@@ -445,9 +449,56 @@ async def cancel_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ----- Broadcast System (/broadcast) -----
+async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Starts the broadcast conversation for admins."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("🚫 Access Denied: Admin privileges required.")
+        return ConversationHandler.END
+
+    text = (
+        "📢 Broadcast Announcement Mode\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📥 Please send the message (Text, Photo, or Document) you wish to broadcast to ALL bot users.\n\n"
+        "💡 Send /cancel at any time to abort this operation."
+    )
+    await update.message.reply_text(text)
+    return WAITING_FOR_BROADCAST_MSG
+
+
+async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dispatches the broadcast message to all users safely."""
+    user_ids = get_all_user_ids()
+    if not user_ids:
+        await update.message.reply_text("⚠️ No registered users found in the database.")
+        return ConversationHandler.END
+
+    await update.message.reply_text(f"🚀 Dispatching broadcast to {len(user_ids)} users...")
+
+    successful = 0
+    failed = 0
+
+    for uid in user_ids:
+        try:
+            await update.message.copy(chat_id=uid)
+            successful += 1
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to user {uid}: {e}")
+            failed += 1
+
+    result_text = (
+        "✅ Broadcast Completed Successfully!\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎉 Delivered: {successful} users\n"
+        f"❌ Failed / Blocked: {failed} users"
+    )
+    await update.message.reply_text(result_text)
+    return ConversationHandler.END
+
+
 # ----- Admin Order Callbacks -----
 async def admin_order_callback(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.callback_query
 
@@ -482,9 +533,9 @@ async def admin_order_callback(
             await context.bot.send_message(
                 chat_id=order["user_id"],
                 text=(
-                    f"🎉 Order Approved!\n\n"
+                    "🎉 Order Approved!\n\n"
                     f"Your order #ORD-{order_id} has been confirmed. "
-                    f"Our delivery team is preparing your items!"
+                    "Our delivery team is preparing your items!"
                 ),
             )
         except Exception as e:
@@ -497,9 +548,9 @@ async def admin_order_callback(
             await context.bot.send_message(
                 chat_id=order["user_id"],
                 text=(
-                    f"ℹ️ Order Status Update:\n\n"
+                    "ℹ️ Order Status Update:\n\n"
                     f"Your order #ORD-{order_id} has been cancelled. "
-                    f"If you have any questions, please contact support."
+                    "If you have any questions, please contact support."
                 ),
             )
         except Exception as e:

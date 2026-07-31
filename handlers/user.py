@@ -20,10 +20,9 @@ from database.db import (
     get_order_details,
     decrease_cart_quantity,
 )
-# የ Referral Database Funktionen Import ማድረጊያ
 from database.users_db import get_user, add_user, add_referral_points
 
-# Import ADMIN_IDS safely or provide default
+# Import ADMIN_IDS safely
 try:
     from config import ADMIN_IDS
 except ImportError:
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Conversation States
 WAITING_FOR_PHONE = 1
 
-# Category icon helper
+# Category Icon Helper
 CATEGORY_ICONS = {
     "Shoes": "👟",
     "Clothes": "👕",
@@ -58,7 +57,6 @@ def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
 
     cart_label = f"🛒 My Cart ({total_qty})" if total_qty > 0 else "🛒 My Cart"
 
-    # '🎁 Invite & Earn' የሚለው አዲስ Button እዚህ ተጨምሯል
     keyboard = [
         [KeyboardButton("🛍️ Browse Catalog"), KeyboardButton(cart_label)],
         [KeyboardButton("📦 My Orders"), KeyboardButton("🎁 Invite & Earn")],
@@ -75,41 +73,35 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_first_name = update.effective_user.first_name or "Valued Customer"
     user_id = update.effective_user.id
 
-    # -------------------------------------------------------------
-    # 1. REFERRAL SYSTEM LOGIC (የጋበዣ ሲስተም)
-    # -------------------------------------------------------------
+    # 1. Referral Logic
     existing_user = get_user(user_id)
 
-    # አዲስ ተጠቃሚ ከሆነ ብቻ Referral ሎጂኩ ይሠራል
     if not existing_user:
         referrer_id = None
 
-        # በሬፈራል ሊንክ ከተመጣ (ለምሳሌ /start 12345678)
         if context.args and context.args[0].isdigit():
             possible_ref = int(context.args[0])
-            # ራሱን እንዳይጋብዝ እና የጋበዘው ሰው DB ውስጥ መኖሩን ማረጋገጥ
             if possible_ref != user_id and get_user(possible_ref):
                 referrer_id = possible_ref
 
-        # አዲሱን ተጠቃሚ በ Users DB መመዝገብ
         add_user(user_id, referrer_id)
 
-                # Add reward points and send notification to referrer
         if referrer_id:
             add_referral_points(referrer_id, points=10)
             try:
+                ref_notify_text = (
+                    "🎉 New User Joined via Your Link!\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "⭐ +10 Reward Points have been added to your balance."
+                )
                 await context.bot.send_message(
                     chat_id=referrer_id,
-                    text="🎉 **New User Joined via Your Link!**\n+10 Points have been added to your balance.",
-                    parse_mode="Markdown"
+                    text=ref_notify_text,
                 )
             except Exception as e:
                 logger.error(f"Error notifying referrer {referrer_id}: {e}")
 
-
-    # -------------------------------------------------------------
-    # 2. DEEP LINKING (Direct product display from channel link)
-    # -------------------------------------------------------------
+    # 2. Deep Linking (Direct product view)
     if context.args and context.args[0].startswith("prod_"):
         try:
             product_id = int(context.args[0].split("_")[1])
@@ -117,13 +109,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if product:
                 icon = get_category_icon(product["name"])
                 caption = (
-                    f"💎 PREMIUM ARRIVAL / አዲስ የገባ 💎\n\n"
+                    "💎 PREMIUM ARRIVAL / NEW ITEM 💎\n\n"
                     f"{icon} Product: {product['name']}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"📏 Available Sizes: {product['size']}\n"
                     f"📦 In Stock: {product['stock']} item(s)\n"
                     f"💵 Price: {product['price']:,.2f} ETB\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━"
+                    "━━━━━━━━━━━━━━━━━━━━━━"
                 )
                 reply_markup = build_product_keyboard(user_id, product)
                 photo_ids = [
@@ -146,20 +138,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error handling deep link: {e}")
 
-    # -------------------------------------------------------------
-    # 3. NORMAL WELCOME SCREEN
-    # -------------------------------------------------------------
+    # 3. Normal Welcome Screen
     welcome_text = (
         f"💎 Welcome to Ethio Shoe Store, {user_first_name}!\n"
-        f"Your ultimate spot for premium shoes, clothing & accessories.\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 Main Features:\n"
-        f"• 🛍️ Browse latest catalog & sizes\n"
-        f"• 🛒 Multi-item Shopping Cart\n"
-        f"• 🎁 Invite friends & earn reward points\n"
-        f"• 🚀 Fast Checkout & Order Tracking\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👇 Use the buttons below to start shopping:"
+        "Your ultimate spot for premium shoes, clothing & accessories.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 Main Features:\n"
+        "• 🛍️ Browse latest catalog & sizes\n"
+        "• 🛒 Multi-item Shopping Cart\n"
+        "• 🎁 Invite friends & earn reward points\n"
+        "• 🚀 Fast Checkout & Order Tracking\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👇 Use the buttons below to start shopping:"
     )
 
     await update.message.reply_text(
@@ -170,12 +160,38 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Customer support info"""
     support_text = (
-        "🎧 Customer Support\n\n"
-        "Have questions or need assistance with your size?\n"
-        "📞 Call/Telegram: @EthioShoeSupport / +251900000000\n"
+        "🎧 Customer Support\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Have questions or need assistance with sizing?\n\n"
+        "📞 Telegram: @EthioShoeSupport\n"
+        "📱 Phone: +251900000000\n"
         "🕒 Working Hours: Mon - Sat (8:30 AM - 8:00 PM)"
     )
     await update.message.reply_text(support_text)
+
+
+async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generates user referral link and displays point balance."""
+    user_id = update.effective_user.id
+    bot_username = (await context.bot.get_me()).username
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
+
+    user_info = get_user(user_id)
+    points = user_info.get("points", 0) if isinstance(user_info, dict) else 0
+
+    invite_text = (
+        "🎁 INVITE FRIENDS & EARN REWARDS\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⭐ Your Points Balance: {points} Points\n\n"
+        "🔗 Your Exclusive Referral Link:\n"
+        f"{referral_link}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 How it works:\n"
+        "1. Share your link with friends.\n"
+        "2. Earn 10 points for every new user who joins!\n"
+        "3. Redeem points for exclusive discounts."
+    )
+    await update.message.reply_text(invite_text)
 
 
 # ----- Dynamic Keyboard Builder Helper -----
@@ -283,11 +299,11 @@ async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
         icon = get_category_icon(item["name"])
         caption = (
             f"{icon} Product: {item['name']}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📏 Available Sizes: {item['size']}\n"
             f"📦 Stock Available: {item['stock']} item(s)\n"
             f"💵 Price: {item['price']:,.2f} ETB\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━━━━━━━━━"
         )
 
         reply_markup = build_product_keyboard(user_id, item)
@@ -363,7 +379,9 @@ async def handle_catalog_interactions(
                 user_id, product, selected_size=size
             )
             await query.edit_message_reply_markup(reply_markup=reply_markup)
-            await query.answer(f"➕ Added Size {size}! (Cart: {total_items} items)")
+            await query.answer(
+                f"➕ Added Size {size}! (Cart: {total_items} items)"
+            )
         else:
             await query.answer(msg, show_alert=True)
 
@@ -377,7 +395,9 @@ async def handle_catalog_interactions(
             user_id, product, selected_size=size
         )
         await query.edit_message_reply_markup(reply_markup=reply_markup)
-        await query.answer(f"➖ Decreased Size {size}. (Cart: {total_items} items)")
+        await query.answer(
+            f"➖ Decreased Size {size}. (Cart: {total_items} items)"
+        )
 
 
 # ----- Cart & Checkout System -----
@@ -434,12 +454,12 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = subtotal + delivery_fee
 
     cart_text += (
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💵 Subtotal: {subtotal:,.2f} ETB\n"
         f"🚚 Delivery Fee: {delivery_str}\n"
-        f"--------------------------------------\n"
+        "--------------------------------------\n"
         f"💳 TOTAL AMOUNT: {total:,.2f} ETB\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     keyboard = [
@@ -457,9 +477,7 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query
         else update.message
     )
-    await target.reply_text(
-        cart_text, reply_markup=reply_markup
-    )
+    await target.reply_text(cart_text, reply_markup=reply_markup)
 
 
 async def cart_action_handler(
@@ -551,19 +569,19 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     receipt_text = (
-        f"✅ Order Placed Successfully!\n\n"
-        f"📄 Order Receipt\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ Order Placed Successfully!\n\n"
+        "📄 Order Receipt\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 Order ID: #ORD-{order_id}\n"
         f"👤 Customer: {user_name}\n"
         f"📞 Phone: {phone_number}\n\n"
         f"📦 Items Ordered:\n{items_summary}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🚚 Delivery Fee: {delivery_str}\n"
         f"💰 Total Amount: {grand_total:,.2f} ETB\n"
-        f"🔄 Status: 🟡 Processing\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💡 Our delivery team will contact you shortly to confirm delivery details."
+        "🔄 Status: 🟡 Processing\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💡 Our delivery team will contact you shortly to confirm delivery details."
     )
     await update.message.reply_text(
         receipt_text, reply_markup=build_main_menu(user.id)
@@ -571,16 +589,16 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Admin Notification UI
     admin_msg = (
-        f"🚨 NEW ORDER RECEIVED!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🚨 NEW ORDER RECEIVED!\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 Order ID: #ORD-{order_id}\n"
         f"👤 Customer: {user_name} (ID: {user.id})\n"
         f"📞 Phone: {phone_number}\n\n"
         f"📦 Items:\n{items_summary}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🚚 Delivery: {delivery_str}\n"
         f"💳 Total Amount: {grand_total:,.2f} ETB\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     admin_keyboard = [
@@ -598,7 +616,9 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
-                chat_id=admin_id, text=admin_msg, reply_markup=admin_reply_markup
+                chat_id=admin_id,
+                text=admin_msg,
+                reply_markup=admin_reply_markup,
             )
         except Exception as e:
             logger.error(f"Error notifying admin {admin_id}: {e}")
@@ -652,7 +672,7 @@ async def view_orders_history(
             f"📦 Items: {items_str}\n"
             f"💰 Total Amount: {order['total_price']:,.2f} ETB\n"
             f"🔄 Status: {status}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         )
 
     await update.message.reply_text(msg)

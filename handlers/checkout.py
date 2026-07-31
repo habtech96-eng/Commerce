@@ -5,8 +5,16 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram.ext import (
+    ContextTypes,
+    ConversationHandler,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+)
 from database.db import get_user_cart, create_multi_item_order
 from database.users_db import record_successful_purchase
 from handlers.user import build_main_menu, get_category_icon
@@ -45,9 +53,10 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.message.reply_text(
-        "📱 Checkout Process (Step 1/2):\n\n"
+        "📱 <b>Checkout Process (Step 1/2):</b>\n\n"
         "To place your order, please tap the button below to share your phone number or type it manually:",
         reply_markup=reply_markup,
+        parse_mode="HTML",
     )
     return WAITING_FOR_PHONE
 
@@ -90,36 +99,38 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     receipt_text = (
-        f"✅ Order Placed Successfully!\n\n"
-        f"📄 Order Receipt\n"
+        f"✅ <b>Order Placed Successfully!</b>\n\n"
+        f"📄 <b>Order Receipt</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🆔 Order ID: #ORD-{order_id}\n"
+        f"🆔 Order ID: <code>#ORD-{order_id}</code>\n"
         f"👤 Customer: {user_name}\n"
         f"📞 Phone: {phone_number}\n\n"
-        f"📦 Items Ordered:\n{items_summary}\n"
+        f"📦 <b>Items Ordered:</b>\n{items_summary}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🚚 Delivery Fee: {delivery_str}\n"
-        f"💰 Total Amount: {grand_total:,.2f} ETB\n"
-        f"🔄 Status: Processing\n"
+        f"💰 Total Amount: <b>{grand_total:,.2f} ETB</b>\n"
+        f"🔄 Status: ⏳ Pending Approval\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💡 Our delivery team will contact you shortly to confirm delivery."
+        f"💡 Our team will review and confirm your order shortly."
     )
 
     await update.message.reply_text(
-        receipt_text, reply_markup=build_main_menu(user.id)
+        receipt_text,
+        reply_markup=build_main_menu(user.id),
+        parse_mode="HTML",
     )
 
     # Prepare notification for Admins
     admin_msg = (
-        f"🚨 NEW ORDER RECEIVED!\n"
+        f"🚨 <b>NEW ORDER RECEIVED!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🆔 Order ID: #ORD-{order_id}\n"
-        f"👤 Customer: {user_name} (ID: {user.id})\n"
+        f"🆔 Order ID: <code>#ORD-{order_id}</code>\n"
+        f"👤 Customer: {user_name} (ID: <code>{user.id}</code>)\n"
         f"📞 Phone: {phone_number}\n\n"
-        f"📦 Items:\n{items_summary}\n"
+        f"📦 <b>Items:</b>\n{items_summary}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🚚 Delivery: {delivery_str}\n"
-        f"💳 Total Amount: {grand_total:,.2f} ETB\n"
+        f"💳 Total Amount: <b>{grand_total:,.2f} ETB</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -138,7 +149,10 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
-                chat_id=admin_id, text=admin_msg, reply_markup=admin_reply_markup
+                chat_id=admin_id,
+                text=admin_msg,
+                reply_markup=admin_reply_markup,
+                parse_mode="HTML",
             )
         except Exception as e:
             logger.error(f"Error notifying admin {admin_id}: {e}")
@@ -170,8 +184,50 @@ async def handle_admin_order_approval(update: Update, context: ContextTypes.DEFA
         if buyer_id:
             record_successful_purchase(buyer_id=buyer_id, reward_referrer_points=20)
 
+            # Notify the Buyer
+            try:
+                await context.bot.send_message(
+                    chat_id=buyer_id,
+                    text=(
+                        f"🎉 <b>Order Update!</b>\n\n"
+                        f"Your Order <code>#ORD-{order_id}</code> has been <b>APPROVED</b>! "
+                        f"Our delivery team is preparing your package. 🚚"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify buyer {buyer_id} of approval: {e}")
+
         await query.edit_message_text(
             f"✅ Order #ORD-{order_id} has been Approved and marked for delivery."
         )
+
     elif action == "cancel":
+        # Notify the Buyer
+        if buyer_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=buyer_id,
+                    text=(
+                        f"❌ <b>Order Update</b>\n\n"
+                        f"Your Order <code>#ORD-{order_id}</code> has been cancelled. "
+                        f"Please contact support if you have any questions."
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify buyer {buyer_id} of cancellation: {e}")
+
         await query.edit_message_text(f"❌ Order #ORD-{order_id} has been Cancelled.")
+
+
+# Define the Checkout Conversation Handler export
+checkout_conv_handler = ConversationHandler(
+    entry_points=[CallbackQueryHandler(start_checkout, pattern="^proceed_checkout$")],
+    states={
+        WAITING_FOR_PHONE: [
+            MessageHandler(filters.CONTACT | filters.TEXT & ~filters.COMMAND, process_checkout)
+        ],
+    },
+    fallbacks=[CommandHandler("cancel", cancel_checkout)],
+)

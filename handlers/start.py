@@ -1,83 +1,106 @@
-from aiogram import Router, F
-from aiogram.filters import CommandStart, CommandObject
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from database.db import register_user, add_referral_points, get_user_stats
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+from database.db import get_user_stats
+from database.users_db import get_user, add_user, add_referral_points
 
-router = Router()
+logger = logging.getLogger(__name__)
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
+# ----- Start Command with `ref_` Referral Link Support -----
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or update.effective_user.first_name
     referrer_id = None
 
-    # Parse referral link parameters (e.g., /start ref_123456)
-    args = command.args
-    if args and args.startswith("ref_"):
-        try:
-            possible_referrer = int(args.split("_")[1])
-            if possible_referrer != user_id:  # Prevent self-referral
+    # Parse referral link parameters (e.g., /start ref_123456 or /start 123456)
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith("ref_"):
+            try:
+                possible_referrer = int(arg.split("_")[1])
+                if possible_referrer != user_id:
+                    referrer_id = possible_referrer
+            except (ValueError, IndexError):
+                referrer_id = None
+        elif arg.isdigit():
+            possible_referrer = int(arg)
+            if possible_referrer != user_id:
                 referrer_id = possible_referrer
-        except ValueError:
-            referrer_id = None
 
-    # Register user in database (returns True if new user)
-    is_new_user = await register_user(user_id=user_id, username=username, referred_by=referrer_id)
+    # Check if user exists in database
+    existing_user = get_user(user_id)
+    is_new_user = existing_user is None
 
-    # Award point to referrer if a new user joined via their link
-    if is_new_user and referrer_id:
-        await add_referral_points(referrer_id, points=1)
-        try:
-            await message.bot.send_message(
-                chat_id=referrer_id,
-                text=f"🎉 <b>New Referral!</b>\n\nUser @{username} joined using your invite link! You earned 1 point."
-            )
-        except Exception as e:
-            print(f"Failed to send referral notification: {e}")
+    if is_new_user:
+        # Register user in database
+        add_user(user_id, referrer_id)
 
-    # Main keyboard menu
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍️ View Products", callback_data="view_products")],
-        [InlineKeyboardButton(text="🎁 Invite & Earn", callback_data="show_referral")],
-        [InlineKeyboardButton(text="👤 Profile & Points", callback_data="show_profile")]
-    ])
+        # Award point to referrer if a new user joined via their link
+        if referrer_id:
+            add_referral_points(referrer_id, points=1)
+            try:
+                notify_text = (
+                    "🎉 New Referral Notification!\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"User @{username} joined using your invite link!\n"
+                    "⭐ You earned +1 reward point."
+                )
+                await context.bot.send_message(
+                    chat_id=referrer_id,
+                    text=notify_text
+                )
+            except Exception as e:
+                logger.error(f"Failed to send referral notification to {referrer_id}: {e}")
+
+    # Main Inline Keyboard menu
+    keyboard = [
+        [InlineKeyboardButton("🛍️ View Products", callback_data="open_catalog")],
+        [InlineKeyboardButton("🎁 Invite & Earn", callback_data="show_referral")],
+        [InlineKeyboardButton("👤 Profile & Points", callback_data="show_profile")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     welcome_text = (
-        f"Hello {message.from_user.first_name}! 👋\n\n"
-        f"Welcome to <b>Ethio Shoe Store</b> bot! 👟\n"
-        f"Browse products and place your orders easily.\n\n"
-        f"💡 Invite friends using your referral link to earn discount points!"
+        f"Hello {update.effective_user.first_name}! 👋\n\n"
+        "Welcome to Ethio Shoe Store bot! 👟\n"
+        "Browse products and place your orders easily.\n\n"
+        "💡 Invite friends using your referral link to earn discount points!"
     )
 
-    await message.answer(welcome_text, reply_markup=keyboard, parse_mode="HTML")
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 
-@router.callback_query(F.data == "show_referral")
-async def show_referral_info(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    bot_info = await callback.bot.get_me()
+# ----- Callback Query for Referral Info -----
+async def show_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    bot_info = await context.bot.get_me()
 
     # Generate user referral link
     referral_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
 
     # Fetch user stats from database
-    stats = await get_user_stats(user_id)
-    ref_count = stats.get("referrals_count", 0)
-    points = stats.get("points", 0)
+    stats = get_user_stats(user_id) if callable(get_user_stats) else {}
+    ref_count = stats.get("referrals_count", 0) if isinstance(stats, dict) else 0
+    points = stats.get("points", 0) if isinstance(stats, dict) else 0
 
     text = (
-        f"🎁 <b>Your Referral Program</b>\n\n"
-        f"🔗 <b>Your Invite Link:</b>\n<code>{referral_link}</code>\n\n"
-        f"👥 Total Invited Friends: <b>{ref_count}</b>\n"
-        f"⭐ Total Points Earned: <b>{points}</b>\n\n"
-        f"<i>Share this link with your friends to earn points when they join!</i>"
+        "🎁 Your Referral Program\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔗 Your Invite Link:\n"
+        f"{referral_link}\n\n"
+        f"👥 Total Invited Friends: {ref_count}\n"
+        f"⭐ Total Points Earned: {points}\n\n"
+        "Share this link with your friends to earn points when they join!"
     )
 
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Back to Main Menu", callback_data="back_to_main")]
-        ])
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="back_to_main")]
+    ]
+
+    await query.answer()
+    await query.edit_message_text(
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
