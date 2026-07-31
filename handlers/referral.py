@@ -52,6 +52,48 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(share_card)
 
 
+async def show_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback handler to display referral/profile info when triggered from inline buttons."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    user_data = get_user(user_id)
+
+    try:
+        bot_info = await context.bot.get_me()
+        bot_username = bot_info.username
+    except Exception as e:
+        logger.error(f"Error fetching bot username: {e}")
+        bot_username = context.bot.username or "StoreBot"
+
+    points = user_data[2] if user_data and len(user_data) > 2 else 0
+    total_referrals = user_data[3] if user_data and len(user_data) > 3 else 0
+    successful_purchases = user_data[4] if user_data and len(user_data) > 4 else 0
+
+    referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+
+    dashboard_text = (
+        "👤 USER PROFILE & REFERRAL INFO\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💰 Points Balance: {points} Points\n"
+        f"👥 Total Invited Users: {total_referrals}\n"
+        f"🛍️ Completed Purchases: {successful_purchases}\n\n"
+        "🔗 Your Referral Link:\n"
+        f"{referral_link}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 Invite friends to earn more reward points!"
+    )
+
+    if query.message:
+        try:
+            await query.edit_message_text(dashboard_text)
+        except Exception:
+            await query.message.reply_text(dashboard_text)
+    else:
+        await context.bot.send_message(chat_id=user_id, text=dashboard_text)
+
+
 async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays top 10 referrers leaderboard."""
     top_users = get_top_referrers(10)
