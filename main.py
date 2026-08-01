@@ -133,6 +133,17 @@ def main():
         MessageHandler(menu_button_filter, cancel_add),
     ]
 
+    # Dedicated Fallbacks for Broadcast Handler (excludes CommandHandler("broadcast"))
+    broadcast_fallbacks = [
+        CommandHandler("cancel", cancel_add),
+        CommandHandler("start", cancel_add),
+        CommandHandler("admin", cancel_add),
+        CommandHandler("products", cancel_add),
+        CommandHandler("referral", cancel_add),
+        CommandHandler("leaderboard", cancel_add),
+        MessageHandler(menu_button_filter, cancel_add),
+    ]
+
     checkout_fallbacks = [
         CommandHandler("cancel", cancel_checkout),
         CommandHandler("start", cancel_checkout),
@@ -240,12 +251,12 @@ def main():
         states={
             WAITING_FOR_BROADCAST_MSG: [
                 MessageHandler(
-                    ~filters.COMMAND & ~menu_button_filter,
+                    filters.ALL & ~filters.COMMAND & ~menu_button_filter,
                     process_broadcast,
                 )
             ]
         },
-        fallbacks=cancel_fallbacks,
+        fallbacks=broadcast_fallbacks,
     )
 
     # --- 4. REGISTER HANDLERS ---
