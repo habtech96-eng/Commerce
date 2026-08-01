@@ -55,6 +55,16 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Returns the main menu persistent reply keyboard."""
+    keyboard = [
+        [KeyboardButton("🛍️ Browse Catalog"), KeyboardButton("🛒 My Cart")],
+        [KeyboardButton("📦 My Orders"), KeyboardButton("🎁 Invite & Earn")],
+        [KeyboardButton("🎧 Support / Contact")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
 # ----- Auto-Post Helper Function -----
 async def post_to_channel(
     context: ContextTypes.DEFAULT_TYPE, product_data: dict
@@ -218,7 +228,8 @@ async def handle_product_admin_actions(
         await query.answer()
         await query.message.reply_text(
             f"✏️ Enter new stock quantity for Product ID #{p_id}:\n\n"
-            "(Or send /cancel to stop)"
+            "(Or send /cancel to stop)",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return WAITING_FOR_STOCK_INPUT
 
@@ -240,7 +251,8 @@ async def process_stock_update(
 
         update_product_stock(p_id, new_stock)
         await update.message.reply_text(
-            f"✅ Stock updated successfully! Product ID #{p_id} stock set to {new_stock}."
+            f"✅ Stock updated successfully! Product ID #{p_id} stock set to {new_stock}.",
+            reply_markup=get_main_menu_keyboard(),
         )
         context.user_data.pop("editing_stock_pid", None)
         return ConversationHandler.END
@@ -420,7 +432,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 Price: {price:,.2f} ETB\n"
             f"📦 Stock: {stock} item(s)\n"
             f"🖼️ Photos Attached: {len(photos_list)}",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=get_main_menu_keyboard(),
         )
 
         context.user_data.clear()
@@ -443,7 +455,7 @@ async def get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "❌ Wizard process canceled.", reply_markup=ReplyKeyboardRemove()
+        "❌ Wizard process canceled.", reply_markup=get_main_menu_keyboard()
     )
     context.user_data.clear()
     return ConversationHandler.END
@@ -451,7 +463,7 @@ async def cancel_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----- Broadcast System (/broadcast) -----
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Starts the broadcast conversation for admins."""
+    """Starts the broadcast conversation for admins and hides reply keyboard."""
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("🚫 Access Denied: Admin privileges required.")
         return ConversationHandler.END
@@ -462,15 +474,18 @@ async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📥 Please send the message (Text, Photo, or Document) you wish to broadcast to ALL bot users.\n\n"
         "💡 Send /cancel at any time to abort this operation."
     )
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, reply_markup=ReplyKeyboardRemove())
     return WAITING_FOR_BROADCAST_MSG
 
 
 async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dispatches the broadcast message to all users safely."""
+    """Dispatches the broadcast message to all users safely and restores menu keyboard."""
     user_ids = get_all_user_ids()
     if not user_ids:
-        await update.message.reply_text("⚠️ No registered users found in the database.")
+        await update.message.reply_text(
+            "⚠️ No registered users found in the database.",
+            reply_markup=get_main_menu_keyboard(),
+        )
         return ConversationHandler.END
 
     await update.message.reply_text(f"🚀 Dispatching broadcast to {len(user_ids)} users...")
@@ -492,7 +507,7 @@ async def process_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎉 Delivered: {successful} users\n"
         f"❌ Failed / Blocked: {failed} users"
     )
-    await update.message.reply_text(result_text)
+    await update.message.reply_text(result_text, reply_markup=get_main_menu_keyboard())
     return ConversationHandler.END
 
 
