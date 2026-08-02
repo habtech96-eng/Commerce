@@ -5,7 +5,6 @@ from telegram import (
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     KeyboardButton,
-    ReplyKeyboardRemove,
     InputMediaPhoto,
 )
 from telegram.ext import ContextTypes, ConversationHandler
@@ -41,14 +40,12 @@ CATEGORY_ICONS = {
     "Accessories": "🧢",
 }
 
-
 def get_category_icon(name: str) -> str:
     """Dynamically detects Shoes, Clothes, Bags, Accessories icon."""
     for key, icon in CATEGORY_ICONS.items():
         if key.lower() in name.lower():
             return icon
     return "📦"
-
 
 def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
     """Generates the main persistent reply keyboard with dynamic live Cart count badge."""
@@ -64,16 +61,16 @@ def build_main_menu(user_id: int) -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-
 # ----- Main Navigation & Commands -----
-
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome screen, Referral Link Processing & Deep Link (prod_ID) handler."""
-    user_first_name = update.effective_user.first_name or "Valued Customer"
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_first_name = user.first_name or "Valued Customer"
+    user_id = user.id
+    username = user.username
 
-    # 1. Referral Logic
+    # 1. Referral Logic Fix
     existing_user = get_user(user_id)
 
     if not existing_user:
@@ -84,7 +81,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if possible_ref != user_id and get_user(possible_ref):
                 referrer_id = possible_ref
 
-        add_user(user_id, referrer_id)
+        # Fixed parameters alignment
+        add_user(user_id, username=username, referred_by=referrer_id)
 
         if referrer_id:
             add_referral_points(referrer_id, points=10)
@@ -138,24 +136,23 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error handling deep link: {e}")
 
-    # 3. Normal Welcome Screen
+    # 3. Normal Welcome Screen UI Enhanced
     welcome_text = (
-        f"💎 Welcome to Ethio Shoe Store, {user_first_name}!\n"
+        f"✨ Welcome to Ethio Shoe Store, {user_first_name}! ✨\n"
         "Your ultimate spot for premium shoes, clothing & accessories.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📌 Main Features:\n"
+        "📌 Quick Menu:\n"
         "• 🛍️ Browse latest catalog & sizes\n"
-        "• 🛒 Multi-item Shopping Cart\n"
+        "• 🛒 Manage your Shopping Cart\n"
         "• 🎁 Invite friends & earn reward points\n"
         "• 🚀 Fast Checkout & Order Tracking\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👇 Use the buttons below to start shopping:"
+        "👇 Tap a button below to begin:"
     )
 
     await update.message.reply_text(
         welcome_text, reply_markup=build_main_menu(user_id)
     )
-
 
 async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Customer support info"""
@@ -169,7 +166,6 @@ async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(support_text)
 
-
 async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generates user referral link and displays point balance."""
     user_id = update.effective_user.id
@@ -177,7 +173,8 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
     user_info = get_user(user_id)
-    points = user_info.get("points", 0) if isinstance(user_info, dict) else 0
+    # Fixed Point retrieval logic for Tuple
+    points = user_info[3] if user_info else 0
 
     invite_text = (
         "🎁 INVITE FRIENDS & EARN REWARDS\n"
@@ -193,9 +190,7 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(invite_text)
 
-
 # ----- Dynamic Keyboard Builder Helper -----
-
 
 def build_product_keyboard(
     user_id: int, product: dict, selected_size: str = None
@@ -273,9 +268,7 @@ def build_product_keyboard(
 
     return InlineKeyboardMarkup(keyboard)
 
-
 # ----- Catalog & Product View -----
-
 
 async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays products as Photo Albums (Media Groups) with Size & Quantity controls"""
@@ -330,9 +323,7 @@ async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption, reply_markup=reply_markup
                 )
 
-
 # ----- Real-time Cart Handlers -----
-
 
 async def handle_catalog_interactions(
     update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -399,14 +390,18 @@ async def handle_catalog_interactions(
             f"➖ Decreased Size {size}. (Cart: {total_items} items)"
         )
 
-
 # ----- Cart & Checkout System -----
-
 
 async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Displays user's cart with dynamic icons & smart free delivery calculation"""
     user_id = update.effective_user.id
     cart_items = get_user_cart(user_id)
+    
+    target = (
+        update.callback_query.message
+        if update.callback_query
+        else update.message
+    )
 
     if not cart_items:
         text = (
@@ -420,11 +415,6 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             ]
         ]
-        target = (
-            update.callback_query.message
-            if update.callback_query
-            else update.message
-        )
         await target.reply_text(
             text, reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -472,13 +462,7 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    target = (
-        update.callback_query.message
-        if update.callback_query
-        else update.message
-    )
     await target.reply_text(cart_text, reply_markup=reply_markup)
-
 
 async def cart_action_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -498,9 +482,7 @@ async def cart_action_handler(
         await query.message.delete()
         await show_catalog(update, context)
 
-
 # ----- Checkout Flow -----
-
 
 async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Triggers checkout phone request"""
@@ -512,7 +494,7 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not cart_items:
         await query.edit_message_text(
-            "Your cart is empty. Please add items before checking out."
+            "⚠️ Your cart is empty. Please add items before checking out."
         )
         return ConversationHandler.END
 
@@ -529,7 +511,6 @@ async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup,
     )
     return WAITING_FOR_PHONE
-
 
 async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Finalizes multi-item order and notifies admins"""
@@ -568,9 +549,10 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "FREE 🎉" if delivery_fee == 0.0 else f"{delivery_fee:,.2f} ETB"
     )
 
+    # UI Enhancement: Cleaner Receipt
     receipt_text = (
-        "✅ Order Placed Successfully!\n\n"
-        "📄 Order Receipt\n"
+        "🎉 Order Placed Successfully!\n\n"
+        "📄 Official Receipt\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🆔 Order ID: #ORD-{order_id}\n"
         f"👤 Customer: {user_name}\n"
@@ -581,7 +563,7 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 Total Amount: {grand_total:,.2f} ETB\n"
         "🔄 Status: 🟡 Processing\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💡 Our delivery team will contact you shortly to confirm delivery details."
+        "💡 Our delivery team will contact you shortly to confirm details."
     )
     await update.message.reply_text(
         receipt_text, reply_markup=build_main_menu(user.id)
@@ -625,15 +607,13 @@ async def process_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
 async def cancel_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels checkout flow"""
     user_id = update.effective_user.id
     await update.message.reply_text(
-        "Checkout process canceled.", reply_markup=build_main_menu(user_id)
+        "❌ Checkout process canceled.", reply_markup=build_main_menu(user_id)
     )
     return ConversationHandler.END
-
 
 async def view_orders_history(
     update: Update, context: ContextTypes.DEFAULT_TYPE
